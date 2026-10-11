@@ -17,7 +17,9 @@ local END_DELAY     = 3
 -- Asset IDs
 local FAR_AUDIO_ID         = string.format("rbxassetid://%d", 715673747)
 local CLOSE_AUDIO_ID       = string.format("rbxassetid://%d", 5375147888)
-local MONSTER_IMAGE_ID     = "rbxassetid://134147915905896"   -- DEBUG: Roblox test image
+
+-- rbxthumb URLs always load — this is how Roblox renders thumbnails
+local MONSTER_IMAGE_ID     = "rbxthumb://type=Asset&id=134147915905896&w=420&h=420"
 local FAKE_BADGE_IMAGE     = string.format("rbxassetid://%d", 86164931931654)
 local ACHIEVEMENT_SOUND_ID = "rbxassetid://9114221324"
 
@@ -39,7 +41,7 @@ local MAX_ANGLE       = 0.16
 local FLICKER_COUNT = 3
 local FLICKER_DELAY = 0.05
 
--- Hiding-spot keyword list (case-insensitive, substring match)
+-- Hiding keyword list
 local HIDING_NAMES = {
 	"Closet", "Wardrobe", "Locker", "HidingSpot", "HideSpot", "Hiding_Spot",
 	"Hiding", "Hide", "ClosetDoor",
@@ -47,13 +49,11 @@ local HIDING_NAMES = {
 	"HideUnder", "Hide_Under", "Underbed",
 }
 
--- Hiding-related attributes on character or player
 local HIDING_ATTRS = {
 	"Hiding", "Hidden", "IsHiding", "InHidingSpot", "HidingIn", "HidingSpot",
 	"InCloset", "InBed", "HidingStatus",
 }
 
--- Hiding-related CollectionService tags
 local HIDING_TAGS = {
 	"Hiding", "HidingSpot", "Hidden", "InCloset", "Hiding_Spot",
 }
@@ -79,62 +79,37 @@ rootPart.Anchored = true
 rootPart.Parent = entityModel
 entityModel.PrimaryPart = rootPart
 
--- Face part (WHITE for debug visibility)
+-- Invisible face part — only the BillboardGui image is visible
 local facePart = Instance.new("Part")
 facePart.Name = "Face"
 facePart.Size = Vector3.new(FACE_SIZE, FACE_SIZE, 0.5)
-facePart.Color = Color3.fromRGB(255, 255, 255)
-facePart.Material = Enum.Material.SmoothPlastic
-facePart.Transparency = 0.3
+facePart.Transparency = 1
 facePart.CanCollide = false
 facePart.CanTouch = false
 facePart.CanQuery = false
 facePart.Anchored = true
 facePart.Parent = entityModel
 
--- FRONT GUI (with debug green tint to prove SurfaceGui renders)
-local frontGui = Instance.new("SurfaceGui")
-frontGui.Name = "FrontGui"
-frontGui.Face = Enum.NormalId.Front
-frontGui.AlwaysOnTop = false
-frontGui.LightInfluence = 0
-frontGui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
-frontGui.PixelsPerStud = 100
-frontGui.Parent = facePart
+-- BillboardGui (always renders, always on top)
+local billboard = Instance.new("BillboardGui")
+billboard.Name = "FaceBillboard"
+billboard.Size = UDim2.new(0, 200, 0, 200)   -- 200px on screen
+billboard.AlwaysOnTop = true
+billboard.LightInfluence = 0
+billboard.MaxDistance = 0                     -- no cutoff
+billboard.Adornee = facePart
+billboard.Parent = facePart
 
-local frontImage = Instance.new("ImageLabel")
-frontImage.Size = UDim2.new(1, 0, 1, 0)
-frontImage.Position = UDim2.new(0, 0, 0, 0)
-frontImage.BackgroundColor3 = Color3.fromRGB(0, 255, 0)   -- DEBUG: green bg
-frontImage.BackgroundTransparency = 0.4                    -- DEBUG: half visible
-frontImage.BorderSizePixel = 0
-frontImage.ImageTransparency = 0
-frontImage.ScaleType = Enum.ScaleType.Fit
-frontImage.Image = MONSTER_IMAGE_ID
-frontImage.Parent = frontGui
+local billboardImage = Instance.new("ImageLabel")
+billboardImage.Size = UDim2.new(1, 0, 1, 0)
+billboardImage.Position = UDim2.new(0, 0, 0, 0)
+billboardImage.BackgroundTransparency = 1
+billboardImage.BorderSizePixel = 0
+billboardImage.Image = MONSTER_IMAGE_ID
+billboardImage.ScaleType = Enum.ScaleType.Fit
+billboardImage.Parent = billboard
 
--- BACK GUI (same debug treatment)
-local backGui = Instance.new("SurfaceGui")
-backGui.Name = "BackGui"
-backGui.Face = Enum.NormalId.Back
-backGui.AlwaysOnTop = false
-backGui.LightInfluence = 0
-backGui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
-backGui.PixelsPerStud = 100
-backGui.Parent = facePart
-
-local backImage = Instance.new("ImageLabel")
-backImage.Size = UDim2.new(1, 0, 1, 0)
-backImage.Position = UDim2.new(0, 0, 0, 0)
-backImage.BackgroundColor3 = Color3.fromRGB(0, 255, 0)   -- DEBUG: green bg
-backImage.BackgroundTransparency = 0.4                    -- DEBUG: half visible
-backImage.BorderSizePixel = 0
-backImage.ImageTransparency = 0
-backImage.ScaleType = Enum.ScaleType.Fit
-backImage.Image = MONSTER_IMAGE_ID
-backImage.Parent = backGui
-
--- BRIGHT light so it lights up the room
+-- Bright light so it lights up the room
 local pointLight = Instance.new("PointLight")
 pointLight.Color = Color3.fromRGB(255, 40, 40)
 pointLight.Brightness = 12
@@ -193,14 +168,12 @@ local function isPlayerHiding(player)
 	local hrp = character:FindFirstChild("HumanoidRootPart")
 	if not hrp then return false end
 
-	-- 1. Any ancestor named like a hiding spot
 	local node = character
 	while node and node ~= workspace do
 		if nameMatchesHiding(node.Name) then return true end
 		node = node.Parent
 	end
 
-	-- 2. Attributes on character or player
 	for _, attr in ipairs(HIDING_ATTRS) do
 		local ok, val = pcall(function() return character:GetAttribute(attr) end)
 		if ok and val then return true end
@@ -208,12 +181,10 @@ local function isPlayerHiding(player)
 		if ok2 and val2 then return true end
 	end
 
-	-- 3. CollectionService tags on character
 	for _, tag in ipairs(HIDING_TAGS) do
 		if CollectionService:HasTag(character, tag) then return true end
 	end
 
-	-- 4. Raycast occlusion
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
 	params.FilterDescendantsInstances = {entityModel, character}
@@ -224,11 +195,8 @@ local function isPlayerHiding(player)
 	local direction = target - origin
 
 	local hit = workspace:Raycast(origin, direction, params)
-	if hit then
-		return true
-	end
+	if hit then return true end
 
-	-- 5. HRP enclosed inside a CanCollide transparent part
 	local overlapParams = OverlapParams.new()
 	overlapParams.FilterType = Enum.RaycastFilterType.Exclude
 	overlapParams.FilterDescendantsInstances = {character, entityModel}
@@ -237,9 +205,7 @@ local function isPlayerHiding(player)
 		hrp.CFrame, Vector3.new(2, 2, 2), overlapParams
 	)
 	for _, p in ipairs(nearby) do
-		if p.CanCollide and p.Transparency > 0.4 then
-			return true
-		end
+		if p.CanCollide and p.Transparency > 0.4 then return true end
 		if nameMatchesHiding(p.Name) then return true end
 		if p.Parent and nameMatchesHiding(p.Parent.Name) then return true end
 	end
@@ -310,7 +276,7 @@ local function breakLightsInRoom(room)
 end
 
 -- ============================================================
--- FACING + PROXIMITY AUDIO + CAMERA SHAKE
+-- PROXIMITY AUDIO + CAMERA SHAKE
 -- ============================================================
 local cam = workspace.CurrentCamera
 
@@ -324,15 +290,7 @@ faceConn = RunService.Heartbeat:Connect(function()
 	if not cam then cam = workspace.CurrentCamera end
 	if not cam then return end
 
-	local camPos   = cam.CFrame.Position
-	local targetXZ = Vector3.new(camPos.X, rootPart.Position.Y, camPos.Z)
-
-	if (targetXZ - rootPart.Position).Magnitude > 0.05 then
-		facePart.CFrame = CFrame.lookAt(rootPart.Position, targetXZ)
-	else
-		facePart.CFrame = CFrame.new(rootPart.Position)
-	end
-
+	local camPos = cam.CFrame.Position
 	local dist = (rootPart.Position - camPos).Magnitude
 
 	local farT = math.clamp(
