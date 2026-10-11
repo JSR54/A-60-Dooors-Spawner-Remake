@@ -17,9 +17,7 @@ local END_DELAY     = 3
 -- Asset IDs
 local FAR_AUDIO_ID         = string.format("rbxassetid://%d", 715673747)
 local CLOSE_AUDIO_ID       = string.format("rbxassetid://%d", 5375147888)
-
--- rbxthumb URLs always load — this is how Roblox renders thumbnails
-local MONSTER_IMAGE_ID     = "rbxthumb://type=Asset&id=134147915905896&w=420&h=420"
+local MONSTER_IMAGE_ID     = string.format("rbxassetid://%d", 134147915905896)  -- Roblox-owned test image (guaranteed public)
 local FAKE_BADGE_IMAGE     = string.format("rbxassetid://%d", 86164931931654)
 local ACHIEVEMENT_SOUND_ID = "rbxassetid://9114221324"
 
@@ -79,35 +77,30 @@ rootPart.Anchored = true
 rootPart.Parent = entityModel
 entityModel.PrimaryPart = rootPart
 
--- Invisible face part — only the BillboardGui image is visible
+-- VISIBLE face part with a Decal directly on it (most reliable path)
 local facePart = Instance.new("Part")
 facePart.Name = "Face"
 facePart.Size = Vector3.new(FACE_SIZE, FACE_SIZE, 0.5)
-facePart.Transparency = 1
+facePart.Color = Color3.fromRGB(200, 0, 0)      -- bright red so you can see it regardless
+facePart.Material = Enum.Material.Neon
+facePart.Transparency = 0                        -- fully visible
 facePart.CanCollide = false
 facePart.CanTouch = false
 facePart.CanQuery = false
 facePart.Anchored = true
 facePart.Parent = entityModel
 
--- BillboardGui (always renders, always on top)
-local billboard = Instance.new("BillboardGui")
-billboard.Name = "FaceBillboard"
-billboard.Size = UDim2.new(0, 200, 0, 200)   -- 200px on screen
-billboard.AlwaysOnTop = true
-billboard.LightInfluence = 0
-billboard.MaxDistance = 0                     -- no cutoff
-billboard.Adornee = facePart
-billboard.Parent = facePart
+local frontDecal = Instance.new("Decal")
+frontDecal.Face = Enum.NormalId.Front
+frontDecal.Texture = MONSTER_IMAGE_ID
+frontDecal.Transparency = 0
+frontDecal.Parent = facePart
 
-local billboardImage = Instance.new("ImageLabel")
-billboardImage.Size = UDim2.new(1, 0, 1, 0)
-billboardImage.Position = UDim2.new(0, 0, 0, 0)
-billboardImage.BackgroundTransparency = 1
-billboardImage.BorderSizePixel = 0
-billboardImage.Image = MONSTER_IMAGE_ID
-billboardImage.ScaleType = Enum.ScaleType.Fit
-billboardImage.Parent = billboard
+local backDecal = Instance.new("Decal")
+backDecal.Face = Enum.NormalId.Back
+backDecal.Texture = MONSTER_IMAGE_ID
+backDecal.Transparency = 0
+backDecal.Parent = facePart
 
 -- Bright light so it lights up the room
 local pointLight = Instance.new("PointLight")
@@ -190,11 +183,7 @@ local function isPlayerHiding(player)
 	params.FilterDescendantsInstances = {entityModel, character}
 	params.IgnoreWater = true
 
-	local origin = rootPart.Position
-	local target = hrp.Position
-	local direction = target - origin
-
-	local hit = workspace:Raycast(origin, direction, params)
+	local hit = workspace:Raycast(rootPart.Position, hrp.Position - rootPart.Position, params)
 	if hit then return true end
 
 	local overlapParams = OverlapParams.new()
@@ -292,6 +281,12 @@ faceConn = RunService.Heartbeat:Connect(function()
 
 	local camPos = cam.CFrame.Position
 	local dist = (rootPart.Position - camPos).Magnitude
+
+	-- Make the face part look at the camera
+	local targetXZ = Vector3.new(camPos.X, rootPart.Position.Y, camPos.Z)
+	if (targetXZ - rootPart.Position).Magnitude > 0.05 then
+		facePart.CFrame = CFrame.lookAt(rootPart.Position, targetXZ)
+	end
 
 	local farT = math.clamp(
 		(dist - FAR_SILENT_DIST) / (FAR_FULL_DIST - FAR_SILENT_DIST), 0, 1
