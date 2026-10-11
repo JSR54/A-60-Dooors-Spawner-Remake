@@ -16,8 +16,8 @@ local END_DELAY     = 3
 -- Asset IDs
 local FAR_AUDIO_ID         = string.format("rbxassetid://%d", 715673747)
 local CLOSE_AUDIO_ID       = string.format("rbxassetid://%d", 5375147888)
-local MONSTER_IMAGE_ID     = string.format("rbxassetid://%d", 134147915905896)
-local FAKE_BADGE_IMAGE     = string.format("rbxassetid://%d", 86164931931654)
+local MONSTER_IMAGE_ID     = string.format("rbxassetid://%d", 11287256504)
+local FAKE_BADGE_IMAGE     = string.format("rbxassetid://%d", 127608356480463)
 local ACHIEVEMENT_SOUND_ID = "rbxassetid://9114221324"
 
 -- Proximity tuning
@@ -38,10 +38,18 @@ local MAX_ANGLE       = 0.16
 local FLICKER_COUNT = 3
 local FLICKER_DELAY = 0.05
 
-local hitPlayers  = {}
-local shakeActive = false
-local brokenLights = {}
+-- Hiding-spot keyword list
+local HIDING_NAMES = {
+	"Closet", "Wardrobe", "Locker", "HidingSpot", "HideSpot", "Hiding_Spot",
+	"Hiding", "Hide", "ClosetDoor",
+	-- Beds
+	"Bed", "UnderBed", "Under_Bed", "Under-Bed", "BunkBed", "BedHiding",
+	"HideUnder", "Hide_Under", "Underbed",
+}
 
+local hitPlayers   = {}
+local shakeActive  = false
+local brokenLights = {}
 
 -- ============================================================
 -- ENTITY MODEL
@@ -147,6 +155,55 @@ monsterFog.Decay = Color3.fromRGB(25, 0, 0)
 monsterFog.Glare = 0.4
 monsterFog.Haze = 2.5
 monsterFog.Parent = Lighting
+
+-- ============================================================
+-- HIDING DETECTION
+-- ============================================================
+local function nameMatchesHiding(name)
+	local n = string.lower(name)
+	for _, key in ipairs(HIDING_NAMES) do
+		if string.find(n, string.lower(key), 1, true) then
+			return true
+		end
+	end
+	return false
+end
+
+local function isPlayerHiding(player)
+	local character = player.Character
+	if not character then return false end
+
+	-- 1. Direct parent
+	local parent = character.Parent
+	if parent and parent ~= workspace and nameMatchesHiding(parent.Name) then
+		return true
+	end
+
+	-- 2. Any ancestor up to workspace
+	local node = character
+	while node and node ~= workspace do
+		if nameMatchesHiding(node.Name) then return true end
+		node = node.Parent
+	end
+
+	-- 3. HRP physically inside a hiding-named part
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	if hrp then
+		local params = OverlapParams.new()
+		params.FilterType = Enum.RaycastFilterType.Exclude
+		params.FilterDescendantsInstances = {character, entityModel}
+
+		local parts = workspace:GetPartBoundsInBox(
+			hrp.CFrame, Vector3.new(3, 3, 3), params
+		)
+		for _, p in ipairs(parts) do
+			if nameMatchesHiding(p.Name) then return true end
+			if p.Parent and nameMatchesHiding(p.Parent.Name) then return true end
+		end
+	end
+
+	return false
+end
 
 -- ============================================================
 -- LIGHT BREAKING
@@ -410,7 +467,10 @@ local function activateKillCheck()
 					local distance =
 						(rootPart.Position - character.HumanoidRootPart.Position).Magnitude
 
-					if distance < DAMAGE_RADIUS and not hitPlayers[player.UserId] then
+					if distance < DAMAGE_RADIUS
+						and not hitPlayers[player.UserId]
+						and not isPlayerHiding(player) then
+
 						hitPlayers[player.UserId] = true
 						local humanoid = character:FindFirstChildOfClass("Humanoid")
 						if humanoid and humanoid.Health > 0 then
@@ -440,12 +500,9 @@ local function tweenTo(toPos)
 	return entityModel.Parent ~= nil
 end
 
--- Entries = {pos = Vector3, room = Instance?}
 local function runPath(entries, pauseAtEnd)
 	for i = 1, #entries - 1 do
-		-- Break lights in the room we're about to enter
 		breakLightsInRoom(entries[i + 1].room)
-
 		if not tweenTo(entries[i + 1].pos) then return false end
 	end
 	if pauseAtEnd and END_DELAY > 0 then
@@ -477,24 +534,19 @@ end
 -- ATTACK
 -- ============================================================
 local function launchAttack()
-
 	local roomsFolder = findRoomsFolder()
-
 	if not roomsFolder then
-		warn("[A60] No rooms folder found, aborting attack.")
 		entityModel:Destroy()
 		return
 	end
 
 	local roomList = roomsFolder:GetChildren()
-
 	table.sort(roomList, function(a, b)
 		local numA = tonumber(a.Name:match("%d+")) or 0
 		local numB = tonumber(b.Name:match("%d+")) or 0
 		return numA < numB
 	end)
 
-	-- Build aligned entries (position + room reference)
 	local entries = {}
 	for _, room in ipairs(roomList) do
 		local door = room:FindFirstChild("Door", true)
@@ -511,19 +563,16 @@ local function launchAttack()
 		end
 	end
 
-
 	if #entries == 0 then
 		entityModel:Destroy()
 		return
 	end
 
-	-- Reverse copy for the bounce-backs
 	local reversed = {}
 	for i = #entries, 1, -1 do
 		table.insert(reversed, entries[i])
 	end
 
-	-- Spawn at start, break the starting room's lights
 	rootPart.CFrame = CFrame.new(entries[1].pos)
 	breakLightsInRoom(entries[1].room)
 
