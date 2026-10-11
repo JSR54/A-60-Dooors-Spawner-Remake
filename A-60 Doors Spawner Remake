@@ -132,8 +132,9 @@ backImage.Parent = backGui
 
 local pointLight = Instance.new("PointLight")
 pointLight.Color = Color3.fromRGB(255, 40, 40)
-pointLight.Brightness = 3
-pointLight.Range = 30
+pointLight.Brightness = 12
+pointLight.Range = 60
+pointLight.Shadows = true
 pointLight.Parent = facePart
 
 -- Sounds
