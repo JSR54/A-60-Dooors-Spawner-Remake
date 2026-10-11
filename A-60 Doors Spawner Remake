@@ -17,7 +17,7 @@ local END_DELAY     = 3
 -- Asset IDs
 local FAR_AUDIO_ID         = string.format("rbxassetid://%d", 715673747)
 local CLOSE_AUDIO_ID       = string.format("rbxassetid://%d", 5375147888)
-local MONSTER_IMAGE_ID     = string.format("rbxassetid://%d", 134147915905896)
+local MONSTER_IMAGE_ID = "rbxassetid://6031075931"
 local FAKE_BADGE_IMAGE     = string.format("rbxassetid://%d", 86164931931654)
 local ACHIEVEMENT_SOUND_ID = "rbxassetid://9114221324"
 
