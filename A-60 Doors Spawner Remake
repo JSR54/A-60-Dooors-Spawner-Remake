@@ -1,0 +1,573 @@
+-- Services
+local TweenService = game:GetService("TweenService")
+local Players      = game:GetService("Players")
+local Lighting     = game:GetService("Lighting")
+local RunService   = game:GetService("RunService")
+local SoundService = game:GetService("SoundService")
+local Debris       = game:GetService("Debris")
+
+-- Configuration
+local SPEED         = 75
+local DAMAGE_RADIUS = 28
+local FACE_SIZE     = 12
+local REBOUND_COUNT = 3
+local END_DELAY     = 3
+
+-- Asset IDs
+local FAR_AUDIO_ID         = string.format("rbxassetid://%d", 715673747)
+local CLOSE_AUDIO_ID       = string.format("rbxassetid://%d", 5375147888)
+local MONSTER_IMAGE_ID     = string.format("rbxassetid://%d", 134147915905896)
+local FAKE_BADGE_IMAGE     = string.format("rbxassetid://%d", 86164931931654)
+local ACHIEVEMENT_SOUND_ID = "rbxassetid://9114221324"
+
+-- Proximity tuning
+local FAR_FULL_DIST     = 160
+local FAR_SILENT_DIST   = 45
+local CLOSE_FULL_DIST   = 15
+local CLOSE_SILENT_DIST = 75
+local FAR_MAX_VOL       = 4.0
+local CLOSE_MAX_VOL     = 5.0
+
+-- Shake tuning
+local SHAKE_RANGE     = 85
+local SHAKE_FULL_DIST = 12
+local MAX_OFFSET      = 2.5
+local MAX_ANGLE       = 0.16
+
+-- Light-break tuning
+local FLICKER_COUNT = 3
+local FLICKER_DELAY = 0.05
+
+local hitPlayers  = {}
+local shakeActive = false
+local brokenLights = {}
+
+
+-- ============================================================
+-- ENTITY MODEL
+-- ============================================================
+local entityModel = Instance.new("Model")
+entityModel.Name = "Hardcore_A60"
+
+local rootPart = Instance.new("Part")
+rootPart.Name = "HumanoidRootPart"
+rootPart.Size = Vector3.new(DAMAGE_RADIUS, 18, DAMAGE_RADIUS)
+rootPart.Transparency = 1
+rootPart.CanCollide = false
+rootPart.CanTouch = false
+rootPart.CanQuery = false
+rootPart.Anchored = true
+rootPart.Parent = entityModel
+entityModel.PrimaryPart = rootPart
+
+-- Face part (visible while debugging — set Transparency to 1 when done)
+local facePart = Instance.new("Part")
+facePart.Name = "Face"
+facePart.Size = Vector3.new(FACE_SIZE, FACE_SIZE, 0.5)
+facePart.Color = Color3.fromRGB(180, 0, 0)
+facePart.Material = Enum.Material.SmoothPlastic
+facePart.Transparency = 0.3
+facePart.CanCollide = false
+facePart.CanTouch = false
+facePart.CanQuery = false
+facePart.Anchored = true
+facePart.Parent = entityModel
+
+local frontGui = Instance.new("SurfaceGui")
+frontGui.Name = "FrontGui"
+frontGui.Face = Enum.NormalId.Front
+frontGui.AlwaysOnTop = false
+frontGui.LightInfluence = 0
+frontGui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+frontGui.PixelsPerStud = 50
+frontGui.Parent = facePart
+
+local frontImage = Instance.new("ImageLabel")
+frontImage.Size = UDim2.new(1, 0, 1, 0)
+frontImage.Position = UDim2.new(0, 0, 0, 0)
+frontImage.BackgroundTransparency = 1
+frontImage.BorderSizePixel = 0
+frontImage.ImageTransparency = 0
+frontImage.ScaleType = Enum.ScaleType.Fit
+frontImage.Image = MONSTER_IMAGE_ID
+frontImage.Parent = frontGui
+
+local backGui = Instance.new("SurfaceGui")
+backGui.Name = "BackGui"
+backGui.Face = Enum.NormalId.Back
+backGui.AlwaysOnTop = false
+backGui.LightInfluence = 0
+backGui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+backGui.PixelsPerStud = 50
+backGui.Parent = facePart
+
+local backImage = Instance.new("ImageLabel")
+backImage.Size = UDim2.new(1, 0, 1, 0)
+backImage.Position = UDim2.new(0, 0, 0, 0)
+backImage.BackgroundTransparency = 1
+backImage.BorderSizePixel = 0
+backImage.ImageTransparency = 0
+backImage.ScaleType = Enum.ScaleType.Fit
+backImage.Image = MONSTER_IMAGE_ID
+backImage.Parent = backGui
+
+local pointLight = Instance.new("PointLight")
+pointLight.Color = Color3.fromRGB(255, 40, 40)
+pointLight.Brightness = 3
+pointLight.Range = 30
+pointLight.Parent = facePart
+
+-- Sounds
+local farSound = Instance.new("Sound")
+farSound.Name = "FarSound"
+farSound.SoundId = FAR_AUDIO_ID
+farSound.Pitch = 1.00
+farSound.Volume = 0
+farSound.Looped = true
+farSound.Parent = rootPart
+
+local closeSound = Instance.new("Sound")
+closeSound.Name = "CloseSound"
+closeSound.SoundId = CLOSE_AUDIO_ID
+closeSound.Pitch = 1.00
+closeSound.Volume = 0
+closeSound.Looped = true
+closeSound.Parent = rootPart
+
+entityModel.Parent = workspace
+
+-- ============================================================
+-- FOG
+-- ============================================================
+local monsterFog = Instance.new("Atmosphere")
+monsterFog.Name = "A60_CustomFog"
+monsterFog.Density = 0.85
+monsterFog.Color = Color3.fromRGB(139, 0, 0)
+monsterFog.Decay = Color3.fromRGB(25, 0, 0)
+monsterFog.Glare = 0.4
+monsterFog.Haze = 2.5
+monsterFog.Parent = Lighting
+
+-- ============================================================
+-- LIGHT BREAKING
+-- ============================================================
+local function killLight(light)
+	coroutine.wrap(function()
+		for _ = 1, FLICKER_COUNT do
+			if not light or not light.Parent then return end
+			light.Enabled = not light.Enabled
+			task.wait(FLICKER_DELAY)
+		end
+		if light and light.Parent then
+			light.Enabled = false
+			light:Destroy()
+		end
+	end)()
+end
+
+local function killNeon(part)
+	coroutine.wrap(function()
+		local origMat   = part.Material
+		local origColor = part.Color
+
+		for _ = 1, FLICKER_COUNT do
+			if not part or not part.Parent then return end
+			part.Material = Enum.Material.SmoothPlastic
+			part.Color = Color3.fromRGB(20, 20, 20)
+			task.wait(FLICKER_DELAY)
+
+			if not part or not part.Parent then return end
+			part.Material = origMat
+			part.Color    = origColor
+			task.wait(FLICKER_DELAY)
+		end
+
+		if part and part.Parent then
+			part.Material = Enum.Material.SmoothPlastic
+			part.Color    = Color3.fromRGB(15, 15, 15)
+		end
+	end)()
+end
+
+local function breakLightsInRoom(room)
+	if not room then return end
+
+	for _, desc in ipairs(room:GetDescendants()) do
+		if desc:IsA("PointLight")
+			or desc:IsA("SpotLight")
+			or desc:IsA("SurfaceLight") then
+			if not brokenLights[desc] then
+				brokenLights[desc] = true
+				killLight(desc)
+			end
+		elseif desc:IsA("BasePart")
+			and desc.Material == Enum.Material.Neon then
+			if not brokenLights[desc] then
+				brokenLights[desc] = true
+				killNeon(desc)
+			end
+		end
+	end
+end
+
+-- ============================================================
+-- FACING + PROXIMITY AUDIO + CAMERA SHAKE
+-- ============================================================
+local cam = workspace.CurrentCamera
+
+local faceConn
+faceConn = RunService.Heartbeat:Connect(function()
+	if not entityModel.Parent then
+		if faceConn then faceConn:Disconnect() end
+		return
+	end
+
+	if not cam then cam = workspace.CurrentCamera end
+	if not cam then return end
+
+	local camPos   = cam.CFrame.Position
+	local targetXZ = Vector3.new(camPos.X, rootPart.Position.Y, camPos.Z)
+
+	if (targetXZ - rootPart.Position).Magnitude > 0.05 then
+		facePart.CFrame = CFrame.lookAt(rootPart.Position, targetXZ)
+	else
+		facePart.CFrame = CFrame.new(rootPart.Position)
+	end
+
+	local dist = (rootPart.Position - camPos).Magnitude
+
+	local farT = math.clamp(
+		(dist - FAR_SILENT_DIST) / (FAR_FULL_DIST - FAR_SILENT_DIST), 0, 1
+	)
+	local closeT = math.clamp(
+		(CLOSE_SILENT_DIST - dist) / (CLOSE_SILENT_DIST - CLOSE_FULL_DIST), 0, 1
+	)
+
+	farSound.Volume   = farT   * FAR_MAX_VOL
+	closeSound.Volume = closeT * CLOSE_MAX_VOL
+end)
+
+RunService:BindToRenderStep(
+	"A60_Shake",
+	Enum.RenderPriority.Camera.Value + 1,
+	function(dt)
+		if not shakeActive then return end
+		if not entityModel.Parent then return end
+		if not cam then cam = workspace.CurrentCamera end
+		if not cam then return end
+
+		local dist = (rootPart.Position - cam.CFrame.Position).Magnitude
+
+		local t = 1 - math.clamp(
+			(dist - SHAKE_FULL_DIST) / (SHAKE_RANGE - SHAKE_FULL_DIST), 0, 1
+		)
+		local intensity = t * t
+		if intensity <= 0 then return end
+
+		local o = MAX_OFFSET * intensity
+		local a = MAX_ANGLE  * intensity
+
+		local rx = (math.random() * 2 - 1) * o
+		local ry = (math.random() * 2 - 1) * o
+		local rz = (math.random() * 2 - 1) * o * 0.4
+
+		local ra = (math.random() * 2 - 1) * a
+		local rb = (math.random() * 2 - 1) * a
+		local rc = (math.random() * 2 - 1) * a * 1.5
+
+		cam.CFrame = cam.CFrame
+			* CFrame.new(rx, ry, rz)
+			* CFrame.Angles(ra, rb, rc)
+	end
+)
+
+-- ============================================================
+-- DOORS-STYLE ACHIEVEMENT
+-- ============================================================
+local function awardFakeAchievement(player)
+	local playerGui = player:WaitForChild("PlayerGui", 5)
+	if not playerGui then return end
+	if playerGui:FindFirstChild("DoorsAchievementGui") then
+		playerGui.DoorsAchievementGui:Destroy()
+	end
+
+	local sg = Instance.new("ScreenGui")
+	sg.Name = "DoorsAchievementGui"
+	sg.ResetOnSpawn = false
+	sg.IgnoreGuiInset = true
+	sg.Parent = playerGui
+
+	local frame = Instance.new("Frame")
+	frame.Size = UDim2.new(0, 320, 0, 80)
+	frame.Position = UDim2.new(1, 20, 0, -90)
+	frame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+	frame.BorderSizePixel = 0
+	frame.Parent = sg
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 6)
+	corner.Parent = frame
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.fromRGB(60, 50, 20)
+	stroke.Thickness = 1
+	stroke.Transparency = 0.3
+	stroke.Parent = frame
+
+	local accent = Instance.new("Frame")
+	accent.Size = UDim2.new(0, 4, 1, 0)
+	accent.Position = UDim2.new(0, 0, 0, 0)
+	accent.BackgroundColor3 = Color3.fromRGB(255, 200, 60)
+	accent.BorderSizePixel = 0
+	accent.Parent = frame
+
+	local accentCorner = Instance.new("UICorner")
+	accentCorner.CornerRadius = UDim.new(0, 2)
+	accentCorner.Parent = accent
+
+	local badgeImg = Instance.new("ImageLabel")
+	badgeImg.Size = UDim2.new(0, 50, 0, 50)
+	badgeImg.Position = UDim2.new(0, 12, 0.5, -25)
+	badgeImg.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+	badgeImg.BorderSizePixel = 0
+	badgeImg.Image = FAKE_BADGE_IMAGE
+	badgeImg.Parent = frame
+
+	local badgeCorner = Instance.new("UICorner")
+	badgeCorner.CornerRadius = UDim.new(0, 4)
+	badgeCorner.Parent = badgeImg
+
+	local badgeStroke = Instance.new("UIStroke")
+	badgeStroke.Color = Color3.fromRGB(90, 75, 30)
+	badgeStroke.Thickness = 1
+	badgeStroke.Parent = badgeImg
+
+	local header = Instance.new("TextLabel")
+	header.Size = UDim2.new(0, 230, 0, 14)
+	header.Position = UDim2.new(0, 75, 0, 12)
+	header.BackgroundTransparency = 1
+	header.Font = Enum.Font.GothamBold
+	header.Text = "ACHIEVEMENT UNLOCKED"
+	header.TextColor3 = Color3.fromRGB(255, 200, 60)
+	header.TextSize = 11
+	header.TextXAlignment = Enum.TextXAlignment.Left
+	header.Parent = frame
+
+	local title = Instance.new("TextLabel")
+	title.Size = UDim2.new(0, 230, 0, 20)
+	title.Position = UDim2.new(0, 75, 0, 28)
+	title.BackgroundTransparency = 1
+	title.Font = Enum.Font.GothamBold
+	title.Text = "Survivor of the A-60"
+	title.TextColor3 = Color3.fromRGB(245, 245, 245)
+	title.TextSize = 16
+	title.TextXAlignment = Enum.TextXAlignment.Left
+	title.Parent = frame
+
+	local desc = Instance.new("TextLabel")
+	desc.Size = UDim2.new(0, 230, 0, 28)
+	desc.Position = UDim2.new(0, 75, 0, 46)
+	desc.BackgroundTransparency = 1
+	desc.Font = Enum.Font.Gotham
+	desc.Text = "Survive an encounter with an extremely rare entity."
+	desc.TextColor3 = Color3.fromRGB(160, 160, 160)
+	desc.TextSize = 11
+	desc.TextWrapped = true
+	desc.TextXAlignment = Enum.TextXAlignment.Left
+	desc.TextYAlignment = Enum.TextYAlignment.Top
+	desc.Parent = frame
+
+	local achSound = Instance.new("Sound")
+	achSound.SoundId = ACHIEVEMENT_SOUND_ID
+	achSound.Volume = 0.5
+	achSound.Parent = SoundService
+	achSound:Play()
+	Debris:AddItem(achSound, 3)
+
+	frame:TweenPosition(
+		UDim2.new(1, -340, 0, 20),
+		Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.5, true
+	)
+	task.wait(5)
+	frame:TweenPosition(
+		UDim2.new(1, 20, 0, -90),
+		Enum.EasingDirection.In, Enum.EasingStyle.Quad, 0.5, true
+	)
+	task.wait(0.6)
+	sg:Destroy()
+end
+
+-- ============================================================
+-- DAMAGE HITBOX
+-- ============================================================
+local function activateKillCheck()
+	coroutine.wrap(function()
+		while entityModel.Parent ~= nil do
+			task.wait(0.01)
+			for _, player in ipairs(Players:GetPlayers()) do
+				local character = player.Character
+				if character and character:FindFirstChild("HumanoidRootPart") then
+					local distance =
+						(rootPart.Position - character.HumanoidRootPart.Position).Magnitude
+
+					if distance < DAMAGE_RADIUS and not hitPlayers[player.UserId] then
+						hitPlayers[player.UserId] = true
+						local humanoid = character:FindFirstChildOfClass("Humanoid")
+						if humanoid and humanoid.Health > 0 then
+							humanoid.Health = 0
+						end
+					end
+				end
+			end
+		end
+	end)()
+end
+
+-- ============================================================
+-- PATH HELPERS
+-- ============================================================
+local function tweenTo(toPos)
+	if entityModel.Parent == nil then return false end
+	local dist = (toPos - rootPart.Position).Magnitude
+	local tweenTime = math.max(dist / SPEED, 0.05)
+	local tween = TweenService:Create(
+		rootPart,
+		TweenInfo.new(tweenTime, Enum.EasingStyle.Linear),
+		{ CFrame = CFrame.new(toPos) }
+	)
+	tween:Play()
+	tween.Completed:Wait()
+	return entityModel.Parent ~= nil
+end
+
+-- Entries = {pos = Vector3, room = Instance?}
+local function runPath(entries, pauseAtEnd)
+	for i = 1, #entries - 1 do
+		-- Break lights in the room we're about to enter
+		breakLightsInRoom(entries[i + 1].room)
+
+		if not tweenTo(entries[i + 1].pos) then return false end
+	end
+	if pauseAtEnd and END_DELAY > 0 then
+		local t0 = os.clock()
+		while os.clock() - t0 < END_DELAY do
+			if entityModel.Parent == nil then return false end
+			task.wait(0.1)
+		end
+	end
+	return true
+end
+
+local function findRoomsFolder()
+	local names = {"CurrentRooms", "Rooms", "Room", "Corridors", "Level"}
+	for _, n in ipairs(names) do
+		local f = workspace:FindFirstChild(n)
+		if f then return f end
+	end
+	for _, child in ipairs(workspace:GetChildren()) do
+		for _, n in ipairs(names) do
+			local f = child:FindFirstChild(n)
+			if f then return f end
+		end
+	end
+	return nil
+end
+
+-- ============================================================
+-- ATTACK
+-- ============================================================
+local function launchAttack()
+
+	local roomsFolder = findRoomsFolder()
+
+	if not roomsFolder then
+		warn("[A60] No rooms folder found, aborting attack.")
+		entityModel:Destroy()
+		return
+	end
+
+	local roomList = roomsFolder:GetChildren()
+
+	table.sort(roomList, function(a, b)
+		local numA = tonumber(a.Name:match("%d+")) or 0
+		local numB = tonumber(b.Name:match("%d+")) or 0
+		return numA < numB
+	end)
+
+	-- Build aligned entries (position + room reference)
+	local entries = {}
+	for _, room in ipairs(roomList) do
+		local door = room:FindFirstChild("Door", true)
+		local pos = nil
+		if door and door:IsA("BasePart") then
+			pos = door.Position
+		elseif room:IsA("Model") then
+			pos = room:GetPivot().Position
+		elseif room:IsA("BasePart") then
+			pos = room.Position
+		end
+		if pos then
+			table.insert(entries, {pos = pos, room = room})
+		end
+	end
+
+
+	if #entries == 0 then
+		entityModel:Destroy()
+		return
+	end
+
+	-- Reverse copy for the bounce-backs
+	local reversed = {}
+	for i = #entries, 1, -1 do
+		table.insert(reversed, entries[i])
+	end
+
+	-- Spawn at start, break the starting room's lights
+	rootPart.CFrame = CFrame.new(entries[1].pos)
+	breakLightsInRoom(entries[1].room)
+
+	farSound:Play()
+	closeSound:Play()
+
+	shakeActive = true
+
+	if not runPath(entries, true) then
+		shakeActive = false
+		return
+	end
+
+	for bounce = 1, REBOUND_COUNT do
+		if not runPath(reversed, true) then
+			shakeActive = false
+			return
+		end
+		if bounce < REBOUND_COUNT then
+			if not runPath(entries, true) then
+				shakeActive = false
+				return
+			end
+		end
+	end
+
+	for _, player in ipairs(Players:GetPlayers()) do
+		if not hitPlayers[player.UserId] then
+			coroutine.wrap(awardFakeAchievement)(player)
+		end
+	end
+
+	shakeActive = false
+
+	task.wait(1)
+	farSound:Stop()
+	closeSound:Stop()
+	if faceConn then faceConn:Disconnect() end
+	if monsterFog and monsterFog.Parent then
+		monsterFog:Destroy()
+	end
+	entityModel:Destroy()
+end
+
+activateKillCheck()
+task.wait(2)
+coroutine.wrap(launchAttack)()
