@@ -17,8 +17,8 @@ local END_DELAY     = 3
 -- Asset IDs
 local FAR_AUDIO_ID         = string.format("rbxassetid://%d", 715673747)
 local CLOSE_AUDIO_ID       = string.format("rbxassetid://%d", 5375147888)
-local MONSTER_IMAGE_ID = "rbxassetid://6031075931"
-local FAKE_BADGE_IMAGE     = string.format("rbxassetid://%d", 86164931931654)
+local MONSTER_IMAGE_ID     = "rbxassetid://6031075931"   -- DEBUG: Roblox test image
+local FAKE_BADGE_IMAGE     = string.format("rbxassetid://%d", 127608356480463)
 local ACHIEVEMENT_SOUND_ID = "rbxassetid://9114221324"
 
 -- Proximity tuning
@@ -79,11 +79,11 @@ rootPart.Anchored = true
 rootPart.Parent = entityModel
 entityModel.PrimaryPart = rootPart
 
--- Face part (visible while debugging — set Transparency to 1 when done)
+-- Face part (WHITE for debug visibility)
 local facePart = Instance.new("Part")
 facePart.Name = "Face"
 facePart.Size = Vector3.new(FACE_SIZE, FACE_SIZE, 0.5)
-facePart.Color = Color3.fromRGB(180, 0, 0)
+facePart.Color = Color3.fromRGB(255, 255, 255)
 facePart.Material = Enum.Material.SmoothPlastic
 facePart.Transparency = 0.3
 facePart.CanCollide = false
@@ -92,44 +92,49 @@ facePart.CanQuery = false
 facePart.Anchored = true
 facePart.Parent = entityModel
 
+-- FRONT GUI (with debug green tint to prove SurfaceGui renders)
 local frontGui = Instance.new("SurfaceGui")
 frontGui.Name = "FrontGui"
 frontGui.Face = Enum.NormalId.Front
 frontGui.AlwaysOnTop = false
 frontGui.LightInfluence = 0
 frontGui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
-frontGui.PixelsPerStud = 50
+frontGui.PixelsPerStud = 100
 frontGui.Parent = facePart
 
 local frontImage = Instance.new("ImageLabel")
 frontImage.Size = UDim2.new(1, 0, 1, 0)
 frontImage.Position = UDim2.new(0, 0, 0, 0)
-frontImage.BackgroundTransparency = 1
+frontImage.BackgroundColor3 = Color3.fromRGB(0, 255, 0)   -- DEBUG: green bg
+frontImage.BackgroundTransparency = 0.4                    -- DEBUG: half visible
 frontImage.BorderSizePixel = 0
 frontImage.ImageTransparency = 0
 frontImage.ScaleType = Enum.ScaleType.Fit
 frontImage.Image = MONSTER_IMAGE_ID
 frontImage.Parent = frontGui
 
+-- BACK GUI (same debug treatment)
 local backGui = Instance.new("SurfaceGui")
 backGui.Name = "BackGui"
 backGui.Face = Enum.NormalId.Back
 backGui.AlwaysOnTop = false
 backGui.LightInfluence = 0
 backGui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
-backGui.PixelsPerStud = 50
+backGui.PixelsPerStud = 100
 backGui.Parent = facePart
 
 local backImage = Instance.new("ImageLabel")
 backImage.Size = UDim2.new(1, 0, 1, 0)
 backImage.Position = UDim2.new(0, 0, 0, 0)
-backImage.BackgroundTransparency = 1
+backImage.BackgroundColor3 = Color3.fromRGB(0, 255, 0)   -- DEBUG: green bg
+backImage.BackgroundTransparency = 0.4                    -- DEBUG: half visible
 backImage.BorderSizePixel = 0
 backImage.ImageTransparency = 0
 backImage.ScaleType = Enum.ScaleType.Fit
 backImage.Image = MONSTER_IMAGE_ID
 backImage.Parent = backGui
 
+-- BRIGHT light so it lights up the room
 local pointLight = Instance.new("PointLight")
 pointLight.Color = Color3.fromRGB(255, 40, 40)
 pointLight.Brightness = 12
@@ -208,7 +213,7 @@ local function isPlayerHiding(player)
 		if CollectionService:HasTag(character, tag) then return true end
 	end
 
-	-- 4. Raycast occlusion: is anything between the entity and the player?
+	-- 4. Raycast occlusion
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
 	params.FilterDescendantsInstances = {entityModel, character}
@@ -220,11 +225,10 @@ local function isPlayerHiding(player)
 
 	local hit = workspace:Raycast(origin, direction, params)
 	if hit then
-		-- Something is blocking line of sight — wall, closet door, bed frame
 		return true
 	end
 
-	-- 5. HRP is fully enclosed inside a CanCollide part (fallback for tight hiders)
+	-- 5. HRP enclosed inside a CanCollide transparent part
 	local overlapParams = OverlapParams.new()
 	overlapParams.FilterType = Enum.RaycastFilterType.Exclude
 	overlapParams.FilterDescendantsInstances = {character, entityModel}
@@ -234,7 +238,6 @@ local function isPlayerHiding(player)
 	)
 	for _, p in ipairs(nearby) do
 		if p.CanCollide and p.Transparency > 0.4 then
-			-- Player's HRP is inside something mostly solid and see-through
 			return true
 		end
 		if nameMatchesHiding(p.Name) then return true end
