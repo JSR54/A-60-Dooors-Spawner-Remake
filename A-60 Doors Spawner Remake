@@ -1,10 +1,11 @@
 -- Services
-local TweenService = game:GetService("TweenService")
-local Players      = game:GetService("Players")
-local Lighting     = game:GetService("Lighting")
-local RunService   = game:GetService("RunService")
-local SoundService = game:GetService("SoundService")
-local Debris       = game:GetService("Debris")
+local TweenService      = game:GetService("TweenService")
+local Players           = game:GetService("Players")
+local Lighting          = game:GetService("Lighting")
+local RunService        = game:GetService("RunService")
+local SoundService      = game:GetService("SoundService")
+local Debris            = game:GetService("Debris")
+local CollectionService = game:GetService("CollectionService")
 
 -- Configuration
 local SPEED         = 75
@@ -38,13 +39,23 @@ local MAX_ANGLE       = 0.16
 local FLICKER_COUNT = 3
 local FLICKER_DELAY = 0.05
 
--- Hiding-spot keyword list
+-- Hiding-spot keyword list (case-insensitive, substring match)
 local HIDING_NAMES = {
 	"Closet", "Wardrobe", "Locker", "HidingSpot", "HideSpot", "Hiding_Spot",
 	"Hiding", "Hide", "ClosetDoor",
-	-- Beds
 	"Bed", "UnderBed", "Under_Bed", "Under-Bed", "BunkBed", "BedHiding",
 	"HideUnder", "Hide_Under", "Underbed",
+}
+
+-- Hiding-related attributes on character or player
+local HIDING_ATTRS = {
+	"Hiding", "Hidden", "IsHiding", "InHidingSpot", "HidingIn", "HidingSpot",
+	"InCloset", "InBed", "HidingStatus",
+}
+
+-- Hiding-related CollectionService tags
+local HIDING_TAGS = {
+	"Hiding", "HidingSpot", "Hidden", "InCloset", "Hiding_Spot",
 }
 
 local hitPlayers   = {}
@@ -173,33 +184,60 @@ local function isPlayerHiding(player)
 	local character = player.Character
 	if not character then return false end
 
-	-- 1. Direct parent
-	local parent = character.Parent
-	if parent and parent ~= workspace and nameMatchesHiding(parent.Name) then
-		return true
-	end
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	if not hrp then return false end
 
-	-- 2. Any ancestor up to workspace
+	-- 1. Any ancestor named like a hiding spot
 	local node = character
 	while node and node ~= workspace do
 		if nameMatchesHiding(node.Name) then return true end
 		node = node.Parent
 	end
 
-	-- 3. HRP physically inside a hiding-named part
-	local hrp = character:FindFirstChild("HumanoidRootPart")
-	if hrp then
-		local params = OverlapParams.new()
-		params.FilterType = Enum.RaycastFilterType.Exclude
-		params.FilterDescendantsInstances = {character, entityModel}
+	-- 2. Attributes on character or player
+	for _, attr in ipairs(HIDING_ATTRS) do
+		local ok, val = pcall(function() return character:GetAttribute(attr) end)
+		if ok and val then return true end
+		local ok2, val2 = pcall(function() return player:GetAttribute(attr) end)
+		if ok2 and val2 then return true end
+	end
 
-		local parts = workspace:GetPartBoundsInBox(
-			hrp.CFrame, Vector3.new(3, 3, 3), params
-		)
-		for _, p in ipairs(parts) do
-			if nameMatchesHiding(p.Name) then return true end
-			if p.Parent and nameMatchesHiding(p.Parent.Name) then return true end
+	-- 3. CollectionService tags on character
+	for _, tag in ipairs(HIDING_TAGS) do
+		if CollectionService:HasTag(character, tag) then return true end
+	end
+
+	-- 4. Raycast occlusion: is anything between the entity and the player?
+	local params = RaycastParams.new()
+	params.FilterType = Enum.RaycastFilterType.Exclude
+	params.FilterDescendantsInstances = {entityModel, character}
+	params.IgnoreWater = true
+
+	local origin = rootPart.Position
+	local target = hrp.Position
+	local direction = target - origin
+
+	local hit = workspace:Raycast(origin, direction, params)
+	if hit then
+		-- Something is blocking line of sight — wall, closet door, bed frame
+		return true
+	end
+
+	-- 5. HRP is fully enclosed inside a CanCollide part (fallback for tight hiders)
+	local overlapParams = OverlapParams.new()
+	overlapParams.FilterType = Enum.RaycastFilterType.Exclude
+	overlapParams.FilterDescendantsInstances = {character, entityModel}
+
+	local nearby = workspace:GetPartBoundsInBox(
+		hrp.CFrame, Vector3.new(2, 2, 2), overlapParams
+	)
+	for _, p in ipairs(nearby) do
+		if p.CanCollide and p.Transparency > 0.4 then
+			-- Player's HRP is inside something mostly solid and see-through
+			return true
 		end
+		if nameMatchesHiding(p.Name) then return true end
+		if p.Parent and nameMatchesHiding(p.Parent.Name) then return true end
 	end
 
 	return false
